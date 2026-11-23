@@ -85,7 +85,7 @@ public final class MainActivity extends Activity {
     private TextView total;
     private TextView speedButton;
     private TextView playStatus;
-    private TextView transcriptView;
+    private TranscriptPanel transcriptView;
     private TextView transcriptToggle;
     private boolean scrubbing;
     private boolean transcriptVisible = true;
@@ -104,11 +104,21 @@ public final class MainActivity extends Activity {
     private final Player.Listener playerListener = new Player.Listener() {
         @Override
         public void onEvents(Player player, Player.Events events) {
-            if (screen != Screen.IMPORT && events.containsAny(Player.EVENT_MEDIA_ITEM_TRANSITION,
-                    Player.EVENT_MEDIA_METADATA_CHANGED)) {
+            if (screen != Screen.IMPORT && (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)
+                    || (screen == Screen.LIBRARY && events.contains(Player.EVENT_MEDIA_METADATA_CHANGED)))) {
                 renderScreen();
             } else {
                 updateControls();
+            }
+        }
+
+        @Override
+        public void onPositionDiscontinuity(Player.PositionInfo oldPosition,
+                                            Player.PositionInfo newPosition, int reason) {
+            if (transcriptView != null && reason == Player.DISCONTINUITY_REASON_SEEK
+                    && newPosition.mediaItem != null && oldPosition.mediaItem != null
+                    && oldPosition.mediaItem.mediaId.equals(newPosition.mediaItem.mediaId)) {
+                transcriptView.seekTo(newPosition.positionMs);
             }
         }
 
@@ -195,7 +205,7 @@ public final class MainActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        if (PlaybackService.OPEN_PLAYER.equals(intent.getAction()) && screen != Screen.IMPORT) {
+        if (PlaybackService.OPEN_PLAYER.equals(intent.getAction()) && screen == Screen.LIBRARY) {
             show(Screen.PLAYER);
         }
     }
@@ -239,6 +249,7 @@ public final class MainActivity extends Activity {
         seekBar = null;
         speedButton = null;
         playStatus = null;
+        transcriptView = null;
         scrubbing = false;
         switch (screen) {
             case LIBRARY -> renderLibrary();
@@ -392,6 +403,9 @@ public final class MainActivity extends Activity {
                     long position = duration() * progress / bar.getMax();
                     elapsed.setText(time(position));
                     timelineArt.setProgress(progress / (float) bar.getMax());
+                    if (transcriptView != null) {
+                        transcriptView.updatePosition(position);
+                    }
                     if (!scrubbing && controller != null) {
                         controller.seekTo(position);
                     }
@@ -450,19 +464,14 @@ public final class MainActivity extends Activity {
         transcriptToggle = pill(transcriptVisible ? "隐藏" : "显示", false, this::toggleTranscript);
         transcriptHeader.addView(transcriptToggle);
         add(transcript, transcriptHeader, 0);
-        transcriptView = text(recording.transcript().isBlank() ? "还没有原文。可在右上角添加。" : recording.transcript(),
-                17, recording.transcript().isBlank() ? MUTED : TEXT, false);
-        transcriptView.setLineSpacing(dp(5), 1.08f);
-        transcriptView.setTextIsSelectable(!recording.transcript().isBlank());
-        add(transcript, transcriptView, 8);
-        if (!transcriptVisible) {
-            transcriptView.setVisibility(View.GONE);
-        }
+        transcriptView = new TranscriptPanel(this, store, recording);
+        transcriptView.setShown(transcriptVisible);
+        add(transcript, transcriptView, 0);
     }
 
     private void toggleTranscript() {
         transcriptVisible = !transcriptVisible;
-        transcriptView.setVisibility(transcriptVisible ? View.VISIBLE : View.GONE);
+        transcriptView.setShown(transcriptVisible);
         transcriptToggle.setText(transcriptVisible ? "隐藏" : "显示");
     }
 
@@ -597,6 +606,9 @@ public final class MainActivity extends Activity {
                 seekBar.setProgress(progress);
                 timelineArt.setProgress(progress / 1000f);
                 elapsed.setText(time(position));
+                if (transcriptView != null) {
+                    transcriptView.updatePosition(position);
+                }
             }
             total.setText(time(duration));
             speedButton.setText(speedLabel(controller.getPlaybackParameters().speed));

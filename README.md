@@ -6,6 +6,10 @@
 
 播放开始后，可以锁屏或切换应用。应用通过 Android Media3 的前台媒体服务在后台播放，系统媒体卡片可控制暂停和继续。应用内含一段合成语音示例，可以直接用来试播。
 
+打开录音的播放页后，应用会在手机上把英文原文与音频对齐。对齐完成后，原文会随播放滚动并高亮正在朗读的段落。手动滑动原文时会暂停自动滚动，点「继续跟随」可回到当前段落。编辑原文后，下次打开播放页会重新对齐。
+
+离线对齐使用 Alpha Cephei 的 [Vosk](https://alphacephei.com/vosk/) 和 `vosk-model-small-en-us-0.15`，按 Apache 2.0 授权分发。录音和原文均在手机上处理。
+
 ## 构建
 
 用 Android Studio 打开本目录，安装 Android SDK 35 后运行 `./gradlew assembleDebug`。生成的安装包位于 `app/build/outputs/apk/debug/app-debug.apk`。需要 JDK 17 或更新版本。

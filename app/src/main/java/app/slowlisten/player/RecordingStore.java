@@ -3,9 +3,11 @@ package app.slowlisten.player;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.res.AssetFileDescriptor;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
+import android.media.MediaExtractor;
 import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 import android.provider.OpenableColumns;
@@ -39,7 +41,7 @@ final class RecordingStore extends SQLiteOpenHelper {
     private final SharedPreferences playback;
 
     private RecordingStore(Context context) {
-        super(context, "recordings.db", null, 1);
+        super(context, "recordings.db", null, 2);
         this.context = context;
         directory = new File(context.getFilesDir(), TABLE);
         playback = context.getSharedPreferences("playback", Context.MODE_PRIVATE);
@@ -49,7 +51,7 @@ final class RecordingStore extends SQLiteOpenHelper {
     public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE recordings (id TEXT PRIMARY KEY, title TEXT NOT NULL, "
                 + "transcript TEXT NOT NULL, duration INTEGER NOT NULL, "
-                + "position INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL)");
+                + "position INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL, alignment TEXT)");
         ContentValues demo = recordingValues(DEMO_ID, "A Morning Walk",
                 "I try to take a short walk before I start work. Some mornings, I bring my phone. "
                         + "Other mornings, I leave it at home and listen to the sounds around me.\n\n"
@@ -62,7 +64,9 @@ final class RecordingStore extends SQLiteOpenHelper {
 
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        throw new IllegalStateException("Unsupported database version " + newVersion);
+        if (oldVersion < 2) {
+            db.execSQL("ALTER TABLE recordings ADD COLUMN alignment TEXT");
+        }
     }
 
     List<Recording> list() {
@@ -72,7 +76,7 @@ final class RecordingStore extends SQLiteOpenHelper {
                 null, null, "created DESC, rowid DESC")) {
             while (cursor.moveToNext()) {
                 recordings.add(new Recording(cursor.getString(0), cursor.getString(1), "",
-                        cursor.getLong(2), cursor.getLong(3)));
+                        cursor.getLong(2), cursor.getLong(3), null));
             }
         }
         return recordings;
@@ -80,13 +84,13 @@ final class RecordingStore extends SQLiteOpenHelper {
 
     Recording find(String id) {
         try (Cursor cursor = getReadableDatabase().query(TABLE,
-                new String[]{"id", "title", "transcript", "duration", "position"},
+                new String[]{"id", "title", "transcript", "duration", "position", "alignment"},
                 "id = ?", new String[]{id}, null, null, null)) {
             if (!cursor.moveToFirst()) {
                 return null;
             }
             return new Recording(cursor.getString(0), cursor.getString(1), cursor.getString(2),
-                    cursor.getLong(3), cursor.getLong(4));
+                    cursor.getLong(3), cursor.getLong(4), cursor.getString(5));
         }
     }
 
@@ -132,7 +136,7 @@ final class RecordingStore extends SQLiteOpenHelper {
                 target.delete();
                 throw error;
             }
-            return new Recording(id, title, transcript, duration, 0);
+            return new Recording(id, title, transcript, duration, 0, null);
         } finally {
             temp.delete();
         }
@@ -164,10 +168,27 @@ final class RecordingStore extends SQLiteOpenHelper {
     }
 
     void edit(String id, String title, String transcript) {
+        getWritableDatabase().execSQL("UPDATE recordings SET title = ?, "
+                        + "alignment = CASE WHEN transcript = ? THEN alignment ELSE NULL END, "
+                        + "transcript = ? WHERE id = ?",
+                new Object[]{title, transcript, transcript, id});
+    }
+
+    void saveAlignment(Recording recording, String alignment) {
         ContentValues values = new ContentValues();
-        values.put("title", title);
-        values.put("transcript", transcript);
-        getWritableDatabase().update(TABLE, values, "id = ?", new String[]{id});
+        values.put("alignment", alignment);
+        getWritableDatabase().update(TABLE, values, "id = ? AND transcript = ?",
+                new String[]{recording.id(), recording.transcript()});
+    }
+
+    void openAudio(Recording recording, MediaExtractor extractor) throws IOException {
+        if (!DEMO_ID.equals(recording.id())) {
+            extractor.setDataSource(audioFile(recording.id()).getAbsolutePath());
+            return;
+        }
+        try (AssetFileDescriptor audio = context.getAssets().openFd("morning-walk.mp3")) {
+            extractor.setDataSource(audio.getFileDescriptor(), audio.getStartOffset(), audio.getLength());
+        }
     }
 
     void delete(String id) {
@@ -225,5 +246,6 @@ final class RecordingStore extends SQLiteOpenHelper {
         return new File(directory, id + ".audio");
     }
 
-    record Recording(String id, String title, String transcript, long duration, long position) {}
+    record Recording(String id, String title, String transcript, long duration, long position,
+                     String alignment) {}
 }
